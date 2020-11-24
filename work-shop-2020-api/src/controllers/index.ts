@@ -7,3 +7,4 @@ export * from './document.controller';
 export * from './type-document.controller';
 export * from './document-type-document.controller';
 export * from './type-document-document.controller';
+export * from './upload.controller';
