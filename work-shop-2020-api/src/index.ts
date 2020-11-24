@@ -1,4 +1,4 @@
-import {ApplicationConfig, ApiApplication} from './application';
+import {ApiApplication, ApplicationConfig} from './application';
 
 export * from './application';
 
@@ -27,8 +27,8 @@ if (require.main === module) {
       // See https://www.npmjs.com/package/stoppable
       gracePeriodForClose: 5000, // 5 seconds
       openApiSpec: {
-        // useful when used with OpenAPI-to-GraphQL to locate your application
-        setServersFromRequest: true,
+      // useful when used with OpenAPI-to-GraphQL to locate your application
+      setServersFromRequest: true,
       },
     },
   };
