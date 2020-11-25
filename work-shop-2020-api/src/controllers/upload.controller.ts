@@ -10,7 +10,15 @@ import multer = require('multer');
 import PredictionApi = require('@azure/cognitiveservices-customvision-prediction');
 import TrainingApi = require('@azure/cognitiveservices-customvision-training');
 import msRest = require('@azure/ms-rest-js');
-import {repository} from '@loopback/repository';
+import {
+  repository,
+  FilterBuilder,
+  WhereBuilder,
+  Where,
+  Filter,
+} from '@loopback/repository';
+import {DocumentRepository, TypeDocumentRepository} from '../repositories';
+import {Document, TypeDocument} from '../models';
 
 const trainingKey: string = process.env.TRAINING_KEY!;
 const predictionKey: string = process.env.PREDICTION_KEY!;
@@ -18,11 +26,16 @@ const predictionResourceId: string = process.env.PREDICTION_RESOURCE_ID!;
 const endPoint: string = process.env.END_POINT!;
 
 export class UploadController {
-  constructor() {}
+  constructor(
+    @repository(DocumentRepository)
+    public documentRepository: DocumentRepository,
+    @repository(TypeDocumentRepository)
+    public typeDocumentRepository: TypeDocumentRepository,
+  ) {}
   @post('/Import', {
     responses: {
       '200': {
-        description: 'File ',
+        description: 'File imported',
         content: {
           'application/json': {
             schema: {type: 'object'},
@@ -62,42 +75,45 @@ export class UploadController {
     });
 
     const bufferResult = await buffer;
-    const file: Express.Multer.File = bufferResult.files[0];
-    const credentials = new msRest.ApiKeyCredentials({
-      inHeader: {'Training-key': trainingKey},
-    });
-    const trainer = new TrainingApi.TrainingAPIClient(credentials, endPoint);
-    const predictor_credentials = new msRest.ApiKeyCredentials({
-      inHeader: {'Prediction-key': predictionKey},
-    });
-    const predictor = new PredictionApi.PredictionAPIClient(
-      predictor_credentials,
-      endPoint,
-    );
+    if (bufferResult.body['userId'] != null) {
+      const file: Express.Multer.File = bufferResult.files[0];
+      const credentials = new msRest.ApiKeyCredentials({
+        inHeader: {'Training-key': trainingKey},
+      });
+      const trainer = new TrainingApi.TrainingAPIClient(credentials, endPoint);
+      const predictor_credentials = new msRest.ApiKeyCredentials({
+        inHeader: {'Prediction-key': predictionKey},
+      });
+      const predictor = new PredictionApi.PredictionAPIClient(
+        predictor_credentials,
+        endPoint,
+      );
 
-    const results = await predictor.classifyImage(
-      process.env.PROJECT_ID!,
-      process.env.PUBLISH_ITERATION_NAME!,
-      file.buffer,
-    );
-    return results;
-
-    //const fileInserted: File = await this.fileRepository.create(fileJsonToSend);
-    /*DataJsonArray.forEach(
-      async (element: {id: string; name: string; value: string}) => {
-        const dataJsonToSend: Partial<Data> = {
-          refId: +element.id,
-          name: element.name,
-          value: element.value,
-        };
-        await this.fileRepository
-          .data(fileInserted.getId())
-          .create(dataJsonToSend);
-      },
-    );
-    return fileInserted;*/
-
-    return;
+      const results = await predictor.classifyImage(
+        process.env.PROJECT_ID!,
+        process.env.PUBLISH_ITERATION_NAME!,
+        file.buffer,
+      );
+      const id = results.predictions?.[0].tagId;
+      const whereCondition: Filter<TypeDocument> = {
+        where: {
+          uuid: id,
+        },
+      };
+      const typeDocument = await this.typeDocumentRepository.findOne(
+        whereCondition,
+      );
+      const newDocument: Document = new Document({
+        url: 'http://bullshit.com',
+        label: file.originalname,
+        typeDocumentId: typeDocument?.id,
+        userId: bufferResult.body['userId'],
+      });
+      await this.documentRepository.create(newDocument);
+      return results;
+    } else {
+      return {error: 'bruh'};
+    }
   }
 }
 /*const buffer = new Promise<any>((resolve, reject) => {
