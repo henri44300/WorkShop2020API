@@ -8,3 +8,5 @@ export * from './type-document.controller';
 export * from './document-type-document.controller';
 export * from './type-document-document.controller';
 export * from './upload.controller';
+export * from './document-user.controller';
+export * from './user-document.controller';

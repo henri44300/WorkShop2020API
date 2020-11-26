@@ -1,5 +1,6 @@
 import {belongsTo, Entity, model, property} from '@loopback/repository';
 import {TypeDocument} from './type-document.model';
+import {User} from './user.model';
 
 @model()
 export class Document extends Entity {
@@ -24,6 +25,9 @@ export class Document extends Entity {
 
   @belongsTo(() => TypeDocument)
   typeDocumentId: number;
+
+  @belongsTo(() => User)
+  userId: number;
 
   constructor(data?: Partial<Document>) {
     super(data);

@@ -16,6 +16,12 @@ export class TypeDocument extends Entity {
   })
   label: string;
 
+  @property({
+    type: 'string',
+    required: true,
+  })
+  uuid: string;
+
   @hasMany(() => Document)
   documents: Document[];
 
