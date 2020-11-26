@@ -1,0 +1,64 @@
+on: [push]
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+    
+    - uses: actions/checkout@master
+    
+    - uses: azure/login@v1
+      with:
+        creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+    - name: Create ACR
+      id: create-acr
+      run: |
+        az acr create -n workshopCR2020 -g workshopCR2020aa46-rg --location "West Europe" --sku Standard --admin-enabled
+        echo "::set-output name=acr_username::`az acr credential show -n workshopCR2020 --query username | xargs`"
+        echo "::set-output name=acr_password::`az acr credential show -n workshopCR2020 --query passwords[0].value | xargs`"
+        echo "::add-mask::`az acr credential show -n workshopCR2020 --query passwords[0].value | xargs`"
+
+    - uses: azure/docker-login@v1
+      with:
+        login-server: workshopcr2020.azurecr.io
+        username: ${{ steps.create-acr.outputs.acr_username }}
+        password: ${{ steps.create-acr.outputs.acr_password }}
+
+    - name: Build and push image to ACR
+      id: build-image
+      run: |
+        docker build "$GITHUB_WORKSPACE/work-shop-2020-api" -f  "work-shop-2020-api/Dockerfile" -t workshopcr2020.azurecr.io/akscluster:${{ github.sha }}
+        docker push workshopcr2020.azurecr.io/akscluster:${{ github.sha }}
+    
+    - uses: azure/k8s-set-context@v1
+      id: login
+      with:
+         kubeconfig: ${{ secrets.aks_akscluster_kubeConfig }}
+    
+    - name: Create namespace
+      run: |
+        namespacePresent=`kubectl get namespace | grep aksclusterb7f4 | wc -l`
+        if [ $namespacePresent -eq 0 ]
+        then
+            echo `kubectl create namespace aksclusterb7f4`
+        fi
+
+    - uses: azure/k8s-create-secret@v1
+      with:
+        namespace: aksclusterb7f4
+        container-registry-url: workshopcr2020.azurecr.io
+        container-registry-username: ${{ steps.create-acr.outputs.acr_username }}
+        container-registry-password: ${{ steps.create-acr.outputs.acr_password }}
+        secret-name: aksclusterdockerauth
+       
+    - uses: azure/k8s-deploy@v1.2
+      with:
+        namespace: aksclusterb7f4
+        manifests: |
+          manifests/deployment.yml
+          manifests/service.yml
+          manifests/ingress.yml
+        images: |
+          workshopcr2020.azurecr.io/akscluster:${{ github.sha }}
+        imagepullsecrets: |
+          aksclusterdockerauth
