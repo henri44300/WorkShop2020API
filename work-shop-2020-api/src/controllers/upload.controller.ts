@@ -1,27 +1,24 @@
+
 import {
   BlobServiceClient,
   newPipeline, StorageSharedKeyCredential
 } from '@azure/storage-blob';
 import {inject} from '@loopback/core';
 import {
+  Filter, repository
+} from '@loopback/repository';
+import {
   post,
   Request, requestBody,
   Response, RestBindings
 } from '@loopback/rest';
+import {Document, TypeDocument} from '../models';
+import {DocumentRepository, TypeDocumentRepository} from '../repositories';
 import multer = require('multer');
 import PredictionApi = require('@azure/cognitiveservices-customvision-prediction');
 import TrainingApi = require('@azure/cognitiveservices-customvision-training');
 import msRest = require('@azure/ms-rest-js');
 import getStream = require('into-stream');
-import {
-  repository,
-  FilterBuilder,
-  WhereBuilder,
-  Where,
-  Filter,
-} from '@loopback/repository';
-import {DocumentRepository, TypeDocumentRepository} from '../repositories';
-import {Document, TypeDocument} from '../models';
 
 const trainingKey: string = process.env.TRAINING_KEY!;
 const predictionKey: string = process.env.PREDICTION_KEY!;
@@ -79,36 +76,17 @@ export class UploadController {
 
     const bufferResult = await buffer;
 
-    const file: Express.Multer.File = bufferResult.files[0];
-    const credentials = new msRest.ApiKeyCredentials({
-      inHeader: {'Training-key': trainingKey},
-    });
-    const trainer = new TrainingApi.TrainingAPIClient(credentials, endPoint);
-    const predictor_credentials = new msRest.ApiKeyCredentials({
-      inHeader: {'Prediction-key': predictionKey},
-    });
-    const predictor = new PredictionApi.PredictionAPIClient(
-      predictor_credentials,
-      endPoint,
-    );
-
-    const results = await predictor.classifyImage(
-      process.env.PROJECT_ID!,
-      process.env.PUBLISH_ITERATION_NAME!,
-      file.buffer,
-    );
-
     if (bufferResult.body['userId'] != null) {
       const file: Express.Multer.File = bufferResult.files[0];
       const credentials = new msRest.ApiKeyCredentials({
         inHeader: {'Training-key': trainingKey},
       });
       const trainer = new TrainingApi.TrainingAPIClient(credentials, endPoint);
-      const predictor_credentials = new msRest.ApiKeyCredentials({
+      const predictorCredentials = new msRest.ApiKeyCredentials({
         inHeader: {'Prediction-key': predictionKey},
       });
       const predictor = new PredictionApi.PredictionAPIClient(
-        predictor_credentials,
+        predictorCredentials,
         endPoint,
       );
 
@@ -126,42 +104,39 @@ export class UploadController {
       const typeDocument = await this.typeDocumentRepository.findOne(
         whereCondition,
       );
+
+      // ----- S3 ------
+      const sharedKeyCredential = new StorageSharedKeyCredential(process.env.S3_ACCOUNT_NAME!, process.env.S3_ACCESS_KEY!);
+      const pipeline = newPipeline(sharedKeyCredential);
+
+      const url = `https://${process.env.S3_ACCOUNT_NAME}.blob.core.windows.net`
+      const blobServiceClient = new BlobServiceClient(url, pipeline);
+
+      const uploadOptions = { bufferSize: 4 * 1024 * 1024, maxBuffers: 20 };
+      const blobName = Date.now().toString() + file.originalname;
+      const stream = getStream(file.buffer);
+      const containerName = process.env.S3_CONTAINER_NAME!;
+      const containerClient = blobServiceClient.getContainerClient(containerName);
+      const blockBlobClient = containerClient.getBlockBlobClient(blobName);
+
+      try {
+        await blockBlobClient.uploadStream(stream,
+          uploadOptions.bufferSize, uploadOptions.maxBuffers,
+          { blobHTTPHeaders: { blobContentType: "image/jpeg" } });
+      } catch (err) {
+        response.json({message: err.message });
+      }
+
       const newDocument: Document = new Document({
-        url: 'http://bullshit.com',
-        label: file.originalname,
+        url: url + "/mycontainer/" + blobName,
+        label: blobName,
         typeDocumentId: typeDocument?.id,
         userId: bufferResult.body['userId'],
       });
       await this.documentRepository.create(newDocument);
-      return results;
+      return response.json({prediction: results, document: newDocument});
     } else {
       return {error: 'bruh'};
     }
-  }
-}
-    // ----- S3 ------
-    const sharedKeyCredential = new StorageSharedKeyCredential(process.env.S3_ACCOUNT_NAME!, process.env.S3_ACCESS_KEY!);
-    const pipeline = newPipeline(sharedKeyCredential);
-
-    const url = `https://${process.env.S3_ACCOUNT_NAME}.blob.core.windows.net`
-    const blobServiceClient = new BlobServiceClient(url, pipeline);
-
-    const uploadOptions = { bufferSize: 4 * 1024 * 1024, maxBuffers: 20 };
-    const blobName = file.originalname;
-    const stream = getStream(file.buffer);
-    const containerName = process.env.S3_CONTAINER_NAME!;
-    const containerClient = blobServiceClient.getContainerClient(containerName);
-    const blockBlobClient = containerClient.getBlockBlobClient(blobName);
-
-    try {
-      await blockBlobClient.uploadStream(stream,
-        uploadOptions.bufferSize, uploadOptions.maxBuffers,
-        { blobHTTPHeaders: { blobContentType: "image/jpeg" } });
-      response.json({ message: url + "/mycontainer/" + blobName});
-    } catch (err) {
-      response.json({ message: err.message });
-    }
-
-    return results;
   }
 }
