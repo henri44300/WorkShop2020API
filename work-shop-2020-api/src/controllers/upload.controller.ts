@@ -100,7 +100,6 @@ export class UploadController {
     const blockBlobClient = containerClient.getBlockBlobClient(blobName);
 
     try {
-      console.log(blobName);
       await blockBlobClient.uploadStream(stream,
         uploadOptions.bufferSize, uploadOptions.maxBuffers,
         { blobHTTPHeaders: { blobContentType: "image/jpeg" } });
