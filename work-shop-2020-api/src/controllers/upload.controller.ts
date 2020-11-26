@@ -146,8 +146,8 @@ export class UploadController {
           typeDocumentId: typeDocument?.id,
           userId: bufferResult.body['userId'],
         });
-        await this.documentRepository.create(newDocument);
-        return response.json({prediction: results, document: newDocument});
+        const saveDocument = await this.documentRepository.create(newDocument);
+        return response.json({prediction: results, document: saveDocument});
       } else {
         response.statusCode = 400;
         return response.json({error: 'Veuillez renseinger un id'});
