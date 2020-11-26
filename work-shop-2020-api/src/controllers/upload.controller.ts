@@ -89,7 +89,8 @@ export class UploadController {
     const sharedKeyCredential = new StorageSharedKeyCredential(process.env.S3_ACCOUNT_NAME!, process.env.S3_ACCESS_KEY!);
     const pipeline = newPipeline(sharedKeyCredential);
 
-    const blobServiceClient = new BlobServiceClient(`https://${process.env.S3_ACCOUNT_NAME}.blob.core.windows.net`, pipeline);
+    const url = `https://${process.env.S3_ACCOUNT_NAME}.blob.core.windows.net`
+    const blobServiceClient = new BlobServiceClient(url, pipeline);
 
     const uploadOptions = { bufferSize: 4 * 1024 * 1024, maxBuffers: 20 };
     const blobName = file.originalname;
@@ -100,10 +101,10 @@ export class UploadController {
 
     try {
       console.log(blobName);
-      const result = await blockBlobClient.uploadStream(stream,
+      await blockBlobClient.uploadStream(stream,
         uploadOptions.bufferSize, uploadOptions.maxBuffers,
         { blobHTTPHeaders: { blobContentType: "image/jpeg" } });
-      response.json({ message: result. });
+      response.json({ message: url + "/mycontainer/" + blobName});
     } catch (err) {
       response.json({ message: err.message });
     }
