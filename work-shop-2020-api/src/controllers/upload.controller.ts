@@ -1,16 +1,16 @@
-
 import {
   BlobServiceClient,
-  newPipeline, StorageSharedKeyCredential
+  newPipeline,
+  StorageSharedKeyCredential,
 } from '@azure/storage-blob';
 import {inject} from '@loopback/core';
-import {
-  Filter, repository
-} from '@loopback/repository';
+import {Filter, repository} from '@loopback/repository';
 import {
   post,
-  Request, requestBody,
-  Response, RestBindings
+  Request,
+  requestBody,
+  Response,
+  RestBindings,
 } from '@loopback/rest';
 import {Document, TypeDocument} from '../models';
 import {DocumentRepository, TypeDocumentRepository} from '../repositories';
@@ -76,67 +76,85 @@ export class UploadController {
 
     const bufferResult = await buffer;
 
-    if (bufferResult.body['userId'] != null) {
-      const file: Express.Multer.File = bufferResult.files[0];
-      const credentials = new msRest.ApiKeyCredentials({
-        inHeader: {'Training-key': trainingKey},
-      });
-      const trainer = new TrainingApi.TrainingAPIClient(credentials, endPoint);
-      const predictorCredentials = new msRest.ApiKeyCredentials({
-        inHeader: {'Prediction-key': predictionKey},
-      });
-      const predictor = new PredictionApi.PredictionAPIClient(
-        predictorCredentials,
-        endPoint,
-      );
+    try {
+      if (bufferResult.body['userId'] != null) {
+        const file: Express.Multer.File = bufferResult.files[0];
+        const credentials = new msRest.ApiKeyCredentials({
+          inHeader: {'Training-key': trainingKey},
+        });
+        const trainer = new TrainingApi.TrainingAPIClient(
+          credentials,
+          endPoint,
+        );
+        const predictorCredentials = new msRest.ApiKeyCredentials({
+          inHeader: {'Prediction-key': predictionKey},
+        });
+        const predictor = new PredictionApi.PredictionAPIClient(
+          predictorCredentials,
+          endPoint,
+        );
+        const results = await predictor.classifyImage(
+          process.env.PROJECT_ID!,
+          process.env.PUBLISH_ITERATION_NAME!,
+          file.buffer,
+        );
 
-      const results = await predictor.classifyImage(
-        process.env.PROJECT_ID!,
-        process.env.PUBLISH_ITERATION_NAME!,
-        file.buffer,
-      );
-      const id = results.predictions?.[0].tagId;
-      const whereCondition: Filter<TypeDocument> = {
-        where: {
-          uuid: id,
-        },
-      };
-      const typeDocument = await this.typeDocumentRepository.findOne(
-        whereCondition,
-      );
+        const id = results.predictions?.[0].tagId;
+        const whereCondition: Filter<TypeDocument> = {
+          where: {
+            uuid: id,
+          },
+        };
+        const typeDocument = await this.typeDocumentRepository.findOne(
+          whereCondition,
+        );
 
-      // ----- S3 ------
-      const sharedKeyCredential = new StorageSharedKeyCredential(process.env.S3_ACCOUNT_NAME!, process.env.S3_ACCESS_KEY!);
-      const pipeline = newPipeline(sharedKeyCredential);
+        // ----- S3 ------
+        const sharedKeyCredential = new StorageSharedKeyCredential(
+          process.env.S3_ACCOUNT_NAME!,
+          process.env.S3_ACCESS_KEY!,
+        );
+        const pipeline = newPipeline(sharedKeyCredential);
 
-      const url = `https://${process.env.S3_ACCOUNT_NAME}.blob.core.windows.net`
-      const blobServiceClient = new BlobServiceClient(url, pipeline);
+        const url = `https://${process.env.S3_ACCOUNT_NAME}.blob.core.windows.net`;
+        const blobServiceClient = new BlobServiceClient(url, pipeline);
 
-      const uploadOptions = { bufferSize: 4 * 1024 * 1024, maxBuffers: 20 };
-      const blobName = Date.now().toString() + file.originalname;
-      const stream = getStream(file.buffer);
-      const containerName = process.env.S3_CONTAINER_NAME!;
-      const containerClient = blobServiceClient.getContainerClient(containerName);
-      const blockBlobClient = containerClient.getBlockBlobClient(blobName);
+        const uploadOptions = {bufferSize: 4 * 1024 * 1024, maxBuffers: 20};
+        const blobName = Date.now().toString() + file.originalname;
+        const stream = getStream(file.buffer);
+        const containerName = process.env.S3_CONTAINER_NAME!;
+        const containerClient = blobServiceClient.getContainerClient(
+          containerName,
+        );
+        const blockBlobClient = containerClient.getBlockBlobClient(blobName);
 
-      try {
-        await blockBlobClient.uploadStream(stream,
-          uploadOptions.bufferSize, uploadOptions.maxBuffers,
-          { blobHTTPHeaders: { blobContentType: "image/jpeg" } });
-      } catch (err) {
-        response.json({message: err.message });
+        try {
+          await blockBlobClient.uploadStream(
+            stream,
+            uploadOptions.bufferSize,
+            uploadOptions.maxBuffers,
+            {blobHTTPHeaders: {blobContentType: 'image/jpeg'}},
+          );
+        } catch (err) {
+          response.statusCode = 400;
+          return response.json({message: err.message});
+        }
+
+        const newDocument: Document = new Document({
+          url: url + '/mycontainer/' + blobName,
+          label: blobName,
+          typeDocumentId: typeDocument?.id,
+          userId: bufferResult.body['userId'],
+        });
+        await this.documentRepository.create(newDocument);
+        return response.json({prediction: results, document: newDocument});
+      } else {
+        response.statusCode = 400;
+        return response.json({error: 'Veuillez renseinger un id'});
       }
-
-      const newDocument: Document = new Document({
-        url: url + "/mycontainer/" + blobName,
-        label: blobName,
-        typeDocumentId: typeDocument?.id,
-        userId: bufferResult.body['userId'],
-      });
-      await this.documentRepository.create(newDocument);
-      return response.json({prediction: results, document: newDocument});
-    } else {
-      return {error: 'bruh'};
+    } catch (err) {
+      response.statusCode = 400;
+      return response.json({message: err.message});
     }
   }
 }
