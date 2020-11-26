@@ -1,15 +1,18 @@
 import {
-  post,
-  requestBody,
-  RestBindings,
-  Request,
-  Response,
-} from '@loopback/rest';
+  BlobServiceClient,
+  newPipeline, StorageSharedKeyCredential
+} from '@azure/storage-blob';
 import {inject} from '@loopback/core';
+import {
+  post,
+  Request, requestBody,
+  Response, RestBindings
+} from '@loopback/rest';
 import multer = require('multer');
 import PredictionApi = require('@azure/cognitiveservices-customvision-prediction');
 import TrainingApi = require('@azure/cognitiveservices-customvision-training');
 import msRest = require('@azure/ms-rest-js');
+import getStream = require('into-stream');
 import {
   repository,
   FilterBuilder,
@@ -75,6 +78,26 @@ export class UploadController {
     });
 
     const bufferResult = await buffer;
+
+    const file: Express.Multer.File = bufferResult.files[0];
+    const credentials = new msRest.ApiKeyCredentials({
+      inHeader: {'Training-key': trainingKey},
+    });
+    const trainer = new TrainingApi.TrainingAPIClient(credentials, endPoint);
+    const predictor_credentials = new msRest.ApiKeyCredentials({
+      inHeader: {'Prediction-key': predictionKey},
+    });
+    const predictor = new PredictionApi.PredictionAPIClient(
+      predictor_credentials,
+      endPoint,
+    );
+
+    const results = await predictor.classifyImage(
+      process.env.PROJECT_ID!,
+      process.env.PUBLISH_ITERATION_NAME!,
+      file.buffer,
+    );
+
     if (bufferResult.body['userId'] != null) {
       const file: Express.Multer.File = bufferResult.files[0];
       const credentials = new msRest.ApiKeyCredentials({
@@ -116,43 +139,29 @@ export class UploadController {
     }
   }
 }
-/*const buffer = new Promise<any>((resolve, reject) => {
-      upload.any()(request, response, err => {
-        if (err) reject(err);
-        else {
-          resolve({
-            files: request.files,
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            fields: (request as any).fields,
-            body: request.body,
-          });
-        }
-      });
-    });
-    const bufferResult = await buffer;
-    const file: Express.Multer.File = bufferResult.files[0];
-    const bufferToString: string = file.buffer.toString();
-    const DataJsonArray = await csv({
-      delimiter: ';',
-      trim: true,
-    }).fromString(bufferToString);
+    // ----- S3 ------
+    const sharedKeyCredential = new StorageSharedKeyCredential(process.env.S3_ACCOUNT_NAME!, process.env.S3_ACCESS_KEY!);
+    const pipeline = newPipeline(sharedKeyCredential);
 
-    const fileJsonToSend: Partial<File> = {
-      //date: new Date().toString(),
-    };
+    const url = `https://${process.env.S3_ACCOUNT_NAME}.blob.core.windows.net`
+    const blobServiceClient = new BlobServiceClient(url, pipeline);
 
-    const fileInserted: File = await this.fileRepository.create(fileJsonToSend);
+    const uploadOptions = { bufferSize: 4 * 1024 * 1024, maxBuffers: 20 };
+    const blobName = file.originalname;
+    const stream = getStream(file.buffer);
+    const containerName = process.env.S3_CONTAINER_NAME!;
+    const containerClient = blobServiceClient.getContainerClient(containerName);
+    const blockBlobClient = containerClient.getBlockBlobClient(blobName);
 
-    /*DataJsonArray.forEach(
-      async (element: {id: string; name: string; value: string}) => {
-        const dataJsonToSend: Partial<Data> = {
-          refId: +element.id,
-          name: element.name,
-          value: element.value,
-        };
-        await this.fileRepository
-          .data(fileInserted.getId())
-          .create(dataJsonToSend);
-      },
-    );
-    return fileInserted;*/
+    try {
+      await blockBlobClient.uploadStream(stream,
+        uploadOptions.bufferSize, uploadOptions.maxBuffers,
+        { blobHTTPHeaders: { blobContentType: "image/jpeg" } });
+      response.json({ message: url + "/mycontainer/" + blobName});
+    } catch (err) {
+      response.json({ message: err.message });
+    }
+
+    return results;
+  }
+}
